@@ -75,7 +75,6 @@
     },
     "win": {
       "asarUnpack": "node_modules/spellchecker/vendor/hunspell_dictionaries",
-      "artifactName": "${productName}-Setup_${version}.${ext}",
       "icon": "build/icons/win/icon.ico",
       "publish": {
         "provider": "s3",
@@ -96,6 +95,12 @@
         "zip"
       ],
       "icon": "build/icons/png"
+    },
+    "nsis": {
+      "artifactName": "${productName}-Setup_${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Archive_${version}.${ext}"
     },
     "files": [
       "package.json",
