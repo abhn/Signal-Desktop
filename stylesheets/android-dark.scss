@@ -56,10 +56,10 @@ $text-dark_l2: darken($text-dark, 30%);
   }
   .key-verification .icon {
     &.verified {
-      @include color-svg('/images/verified-check.svg', $text-dark);
+      @include color-svg('../images/verified-check.svg', $text-dark);
     }
     &.shield {
-      @include color-svg('/images/shield.svg', $text-dark);
+      @include color-svg('../images/shield.svg', $text-dark);
     }
   }
   .menu-list {
@@ -87,7 +87,7 @@ $text-dark_l2: darken($text-dark, 30%);
   .contact-details .number {
     color: $text-dark_l2;
     .verified-icon {
-       @include color-svg('/images/verified-check.svg', $text-dark_l2);
+       @include color-svg('../images/verified-check.svg', $text-dark_l2);
     }
   }
   .group-member-list .members .contact, .new-group-update .members .contact, .attachment-previews img {
@@ -108,13 +108,13 @@ $text-dark_l2: darken($text-dark, 30%);
       background-color: $grey-dark;
     }
     .shield {
-      @include color-svg('/images/shield.svg', $text-dark);
+      @include color-svg('../images/shield.svg', $text-dark);
     }
     .verified {
-      @include color-svg('/images/verified-check.svg', $text-dark);
+      @include color-svg('../images/verified-check.svg', $text-dark);
     }
     .clock {
-      @include color-svg('/images/clock.svg', $text-dark);
+      @include color-svg('../images/clock.svg', $text-dark);
     }
   }
 
@@ -122,27 +122,27 @@ $text-dark_l2: darken($text-dark, 30%);
     background-color: $grey-dark !important;
     color: $text-dark;
     .verified-icon {
-      @include color-svg('/images/verified-check.svg', $text-dark);
+      @include color-svg('../images/verified-check.svg', $text-dark);
     }
   }
   .sent .status {
     display: inline-block;
-    @include color-svg('/images/check.svg', white);
+    @include color-svg('../images/check.svg', white);
   }
   .delivered .status {
     display: inline-block;
-    @include color-svg('/images/double-check.svg', white);
+    @include color-svg('../images/double-check.svg', white);
   }
   .file-input .paperclip:before {
     content: '';
     display: inline-block;
     width: $button-height;
     height: $button-height;
-    @include color-svg('/images/paperclip.svg', white);
+    @include color-svg('../images/paperclip.svg', white);
     transform: rotateZ(-45deg);
   }
   .capture-audio .microphone:before {
-      @include color-svg('/images/microphone.svg', white);
+      @include color-svg('../images/microphone.svg', white);
   }
   .conversations {
     background-color: $grey-dark_l2;
@@ -163,7 +163,7 @@ $text-dark_l2: darken($text-dark, 30%);
     border-color: $grey-dark_l2;
     @include invert-text-color;
     &.active.ltr, &.active.rtl {
-      background-image: url('/images/x_white.svg');
+      background-image: url('../images/x_white.svg');
     }
   }
   .bubble {
@@ -196,39 +196,39 @@ $text-dark_l2: darken($text-dark, 30%);
   }
 
   .incoming .bubble .fileView .icon{
-    @include color-svg('/images/file.svg', white);
+    @include color-svg('../images/file.svg', white);
     &.audio {
-      @include color-svg('/images/audio.svg', white);
+      @include color-svg('../images/audio.svg', white);
     }
     &.video {
-      @include color-svg('/images/video.svg', white);
+      @include color-svg('../images/video.svg', white);
     }
     &.voice {
-      @include color-svg('/images/voice.svg', white);
+      @include color-svg('../images/voice.svg', white);
     }
   }
 
   .outgoing .bubble .fileView .icon {
-    @include color-svg('/images/file.svg', #CCCCCC);
+    @include color-svg('../images/file.svg', #CCCCCC);
     &.audio {
-      @include color-svg('/images/audio.svg', #CCCCCC);
+      @include color-svg('../images/audio.svg', #CCCCCC);
     }
     &.video {
-      @include color-svg('/images/video.svg', #CCCCCC);
+      @include color-svg('../images/video.svg', #CCCCCC);
     }
     &.voice {
-      @include color-svg('/images/voice.svg', #CCCCCC);
+      @include color-svg('../images/voice.svg', #CCCCCC);
     }
   }
 
   button.clock {
-    @include header-icon-white('/images/clock.svg');
+    @include header-icon-white('../images/clock.svg');
   }
   button.hamburger {
-    @include header-icon-white('/images/menu.svg');
+    @include header-icon-white('../images/menu.svg');
   }
   button.back {
-    @include header-icon-white('/images/back.svg');
+    @include header-icon-white('../images/back.svg');
   }
 
   ::-webkit-scrollbar-thumb {
@@ -263,7 +263,7 @@ $text-dark_l2: darken($text-dark, 30%);
       background-color: $grey_l4;
 
       .icon {
-        @include color-svg('/images/down.svg', black);
+        @include color-svg('../images/down.svg', black);
       }
       .icon:hover {
 	      background-color: white;
@@ -272,7 +272,7 @@ $text-dark_l2: darken($text-dark, 30%);
       &.new-messages  {
         background-color: $blue;
         .icon {
-          @include color-svg('/images/down.svg', white);
+          @include color-svg('../images/down.svg', white);
         }
       	&:hover {
       	  background-color: #1472bd;

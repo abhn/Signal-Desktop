@@ -326,10 +326,7 @@
                 this.send(promise);
             }
         },
-        handleDataMessage: function(dataMessage, confirm, options) {
-            options = options || {};
-            _.defaults(options, {initialLoadComplete: true});
-
+        handleDataMessage: function(dataMessage, confirm) {
             // This function is called from the background script in a few scenarios:
             //   1. on an incoming message
             //   2. on a sent message sync'd from another device
@@ -343,13 +340,10 @@
             if (dataMessage.group) {
                 conversationId = dataMessage.group.id;
             }
-            console.log('queuing handleDataMessage', message.idForLogging());
 
             var conversation = ConversationController.get(conversationId);
             return conversation.queueJob(function() {
                 return new Promise(function(resolve) {
-                    console.log('starting handleDataMessage', message.idForLogging());
-
                     var now = new Date().getTime();
                     var attributes = { type: 'private' };
                     if (dataMessage.group) {
@@ -459,7 +453,18 @@
                         });
                     }
 
-                    console.log('beginning saves in handleDataMessage', message.idForLogging());
+                    if (dataMessage.profileKey) {
+                      var profileKey = dataMessage.profileKey.toArrayBuffer();
+                      if (source == textsecure.storage.user.getNumber()) {
+                        conversation.set({profileSharing: true});
+                      } else if (conversation.isPrivate()) {
+                        conversation.set({profileKey: profileKey});
+                      } else {
+                        ConversationController.getOrCreateAndWait(source, 'private').then(function(sender) {
+                          sender.setProfileKey(profileKey);
+                        });
+                      }
+                    }
 
                     var handleError = function(error) {
                         error = error && error.stack ? error.stack : error;
@@ -488,14 +493,16 @@
                                         //   because we need to start expiration timers, etc.
                                         message.markRead();
                                     }
-                                    if (message.get('unread') && options.initialLoadComplete) {
-                                        conversation.notify(message);
+
+                                    if (message.get('unread')) {
+                                        conversation.notify(message).then(function() {
+                                            confirm();
+                                            return resolve();
+                                        }, handleError);
+                                    } else {
+                                        confirm();
+                                        return resolve();
                                     }
-
-                                    console.log('done with handleDataMessage', message.idForLogging());
-
-                                    confirm();
-                                    return resolve();
                                 }
                                 catch (e) {
                                     handleError(e);

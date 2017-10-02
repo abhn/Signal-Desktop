@@ -73,6 +73,7 @@
                 verified: i18n('verified'),
                 name: this.model.getName(),
                 number: this.model.getNumber(),
+                profileName: this.model.getProfileName()
             };
         }
     });
@@ -105,6 +106,7 @@
             this.listenTo(this.model, 'destroy', this.stopListening);
             this.listenTo(this.model, 'change:verified', this.onVerifiedChange);
             this.listenTo(this.model, 'change:color', this.updateColor);
+            this.listenTo(this.model, 'change:avatar change:profileAvatar', this.updateAvatar);
             this.listenTo(this.model, 'newmessage', this.addMessage);
             this.listenTo(this.model, 'delivered', this.updateMessage);
             this.listenTo(this.model, 'opened', this.onOpened);
@@ -183,7 +185,6 @@
             'click .show-identity': 'showSafetyNumber',
             'click .show-members': 'showMembers',
             'click .conversation-menu .hamburger': 'toggleMenu',
-            'click .openInbox' : 'openInbox',
             'click' : 'onClick',
             'click .bottom-bar': 'focusMessageField',
             'click .back': 'resetPanel',
@@ -201,7 +202,16 @@
             'close .menu': 'closeMenu',
             'select .message-list .entry': 'messageDetail',
             'force-resize': 'forceUpdateMessageFieldSize',
-            'show-identity': 'showSafetyNumber'
+            'show-identity': 'showSafetyNumber',
+            'dragover': 'sendToFileInput',
+            'drop': 'sendToFileInput',
+            'dragleave': 'sendToFileInput'
+        },
+        sendToFileInput: function(e) {
+            if (e.originalEvent.dataTransfer.types[0] != 'Files') {
+                return;
+            }
+            this.fileInput.$el.trigger(e);
         },
 
         onPrune: function() {
@@ -218,7 +228,12 @@
         },
 
         unload: function(reason) {
-            console.log('unloading conversation', this.model.id, 'due to:', reason);
+            console.log(
+                'unloading conversation',
+                this.model.idForLogging(),
+                'due to:',
+                reason
+            );
 
             this.timerMenu.remove();
             this.fileInput.remove();
@@ -275,7 +290,13 @@
                 return;
             }
 
-            console.log('trimming conversation', this.model.id, 'of', models.length, 'old messages');
+            console.log(
+                'trimming conversation',
+                this.model.idForLogging(),
+                'of',
+                models.length,
+                'old messages'
+            );
 
             this.model.messageCollection.remove(models);
             _.forEach(models, function(model) {
@@ -420,7 +441,13 @@
             var view = this.loadingScreen;
             if (view) {
                 var openDelta = Date.now() - this.openStart;
-                console.log('Conversation', this.model.id, 'took', openDelta, 'milliseconds to load');
+                console.log(
+                    'Conversation',
+                    this.model.idForLogging(),
+                    'took',
+                    openDelta,
+                    'milliseconds to load'
+                );
                 this.loadingScreen = null;
                 view.remove();
             }
@@ -652,10 +679,6 @@
             this.model.messageCollection.add(message, {merge: true});
         },
 
-        openInbox: function() {
-            openInbox();
-        },
-
         onClick: function(e) {
             // If there are sub-panels open, we don't want to respond to clicks
             if (!this.panels || !this.panels.length) {
@@ -845,10 +868,11 @@
                     message = i18n('changedRecentlyMultiple');
                 }
             } else {
+                var contactName = contacts.at(0).getTitle();
                 if (isUnverified) {
-                    message = i18n('changedSinceVerified', contacts.at(0).getTitle());
+                    message = i18n('changedSinceVerified', [contactName, contactName]);
                 } else {
-                    message = i18n('changedRecently', contacts.at(0).getTitle());
+                    message = i18n('changedRecently', [contactName, contactName]);
                 }
             }
 
@@ -984,6 +1008,15 @@
             if (color) {
                 header.addClass(color);
             }
+            var avatarView = new (Whisper.View.extend({
+                templateName: 'avatar',
+                render_attributes: { avatar: this.model.getAvatar() }
+            }))();
+            header.find('.avatar').replaceWith(avatarView.render().$('.avatar'));
+        },
+
+        updateAvatar: function(model) {
+            var header = this.$('.conversation-header');
             var avatarView = new (Whisper.View.extend({
                 templateName: 'avatar',
                 render_attributes: { avatar: this.model.getAvatar() }

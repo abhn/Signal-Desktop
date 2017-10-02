@@ -77,20 +77,12 @@
 
     Whisper.InboxView = Whisper.View.extend({
         templateName: 'two-column',
-        className: 'inbox',
-        applyTheme: function() {
-            var theme = storage.get('theme-setting') || 'android';
-            this.$el.removeClass('ios')
-                    .removeClass('android-dark')
-                    .removeClass('android')
-                    .addClass(theme);
-        },
+        className: 'inbox index',
         initialize: function (options) {
             options = options || {};
 
             this.ready = false;
             this.render();
-            this.applyTheme();
             this.$el.attr('tabindex', '1');
             new Whisper.FontSizeView({ el: this.$el });
             this.conversation_stack = new Whisper.ConversationStack({
@@ -149,15 +141,6 @@
                 var banner = new Whisper.ExpiredAlertBanner().render();
                 banner.$el.prependTo(this.$el);
                 this.$el.addClass('expired');
-            } else if (Whisper.Migration.inProgress()) {
-                if (this.appLoadingScreen) {
-                    this.appLoadingScreen.remove();
-                    this.appLoadingScreen = null;
-                }
-                this.showMigrationScreen();
-            } else if (storage.get('migrationEnabled')) {
-                var migrationBanner = new Whisper.MigrationAlertBanner().render();
-                migrationBanner.$el.prependTo(this.$el);
             }
         },
         render_attributes: {
@@ -173,21 +156,11 @@
             'click #header': 'focusHeader',
             'click .conversation': 'focusConversation',
             'click .global-menu .hamburger': 'toggleMenu',
-            'click .show-debug-log': 'showDebugLog',
             'click .showSettings': 'showSettings',
             'select .gutter .conversation-list-item': 'openConversation',
             'input input.search': 'filterContacts',
-            'click .restart-signal': 'reloadBackgroundPage',
+            'click .restart-signal': window.restart,
             'show .lightbox': 'showLightbox',
-            'click .migrate': 'confirmMigration'
-        },
-        confirmMigration: function() {
-            this.confirm(i18n('confirmMigration'), i18n('migrate')).then(this.showMigrationScreen.bind(this));
-        },
-        showMigrationScreen: function() {
-            this.migrationScreen = new Whisper.MigrationView();
-            this.migrationScreen.render();
-            this.migrationScreen.$el.prependTo(this.el);
         },
         startConnectionListener: function() {
             this.interval = setInterval(function() {
@@ -237,12 +210,11 @@
             this.$('.conversation:first .menu').trigger('close');
         },
         reloadBackgroundPage: function() {
-            chrome.runtime.reload();
+            window.location.reload();
         },
         showSettings: function() {
             var view = new Whisper.SettingsView();
             view.$el.appendTo(this.el);
-            view.$el.on('change-theme', this.applyTheme.bind(this));
         },
         filterContacts: function(e) {
             this.searchView.filterContacts(e);
@@ -269,10 +241,6 @@
         },
         toggleMenu: function() {
             this.$('.global-menu .menu-list').toggle();
-        },
-        showDebugLog: function() {
-            this.$('.debug-log').remove();
-            new Whisper.DebugLogView().$el.appendTo(this.el);
         },
         showLightbox: function(e) {
             this.$el.append(e.target);
@@ -303,17 +271,6 @@
             return {
                 expiredWarning: i18n('expiredWarning'),
                 upgrade: i18n('upgrade'),
-            };
-        }
-    });
-
-    Whisper.MigrationAlertBanner = Whisper.View.extend({
-        templateName: 'migration_alert',
-        className: 'expiredAlert clearfix',
-        render_attributes: function() {
-            return {
-                migrationWarning: i18n('migrationWarning'),
-                migrate: i18n('migrate'),
             };
         }
     });

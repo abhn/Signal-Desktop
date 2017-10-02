@@ -51,6 +51,14 @@
         };
     },
 
+    idForLogging: function() {
+        if (this.isPrivate()) {
+            return this.id;
+        }
+
+        return 'group(' + this.id + ')';
+    },
+
     handleMessageError: function(message, errors) {
         this.trigger('messageError', message, errors);
     },
@@ -72,6 +80,8 @@
         this.messageCollection.on('send-error', this.onMessageError, this);
 
         this.on('change:avatar', this.updateAvatarUrl);
+        this.on('change:profileAvatar', this.updateAvatarUrl);
+        this.on('change:profileKey', this.onChangeProfileKey);
         this.on('destroy', this.revokeAvatarUrl);
     },
 
@@ -193,7 +203,7 @@
             }.bind(this)).catch(function(error) {
                 console.log(
                     'getIdentityKeys error for conversation',
-                    this.id,
+                    this.idForLogging(),
                     error && error.stack ? error.stack : error
                 );
                 return lookup;
@@ -205,7 +215,7 @@
                 }).catch(function(error) {
                     console.log(
                         'getIdentityKeys error for group member',
-                        contact.id,
+                        contact.idForLogging(),
                         error && error.stack ? error.stack : error
                     );
                 });
@@ -228,7 +238,7 @@
         if (this.get('decryptedOldIncomingKeyErrors')) {
             return Promise.resolve();
         }
-        console.log('decryptOldIncomingKeyErrors start for', this.id);
+        console.log('decryptOldIncomingKeyErrors start for', this.idForLogging());
 
         var messages = this.messageCollection.filter(function(message) {
             var errors = message.get('errors');
@@ -243,7 +253,7 @@
         });
 
         var markComplete = function() {
-            console.log('decryptOldIncomingKeyErrors complete for', this.id);
+            console.log('decryptOldIncomingKeyErrors complete for', this.idForLogging());
             return new Promise(function(resolve) {
                 this.save({decryptedOldIncomingKeyErrors: true}).always(resolve);
             }.bind(this));
@@ -412,7 +422,13 @@
     },
 
     addKeyChange: function(id) {
-        console.log('adding key change advisory for', this.id, id, this.get('timestamp'));
+        console.log(
+            'adding key change advisory for',
+            this.idForLogging(),
+            id,
+            this.get('timestamp')
+        );
+
         var timestamp = Date.now();
         var message = new Whisper.Message({
             conversationId : this.id,
@@ -435,7 +451,12 @@
 
         var lastMessage = this.get('timestamp') || Date.now();
 
-        console.log('adding verified change advisory for', this.id, id, lastMessage);
+        console.log(
+            'adding verified change advisory for',
+            this.idForLogging(),
+            id,
+            lastMessage
+        );
 
         var timestamp = Date.now();
         var message = new Whisper.Message({
@@ -546,7 +567,10 @@
     queueJob: function(callback) {
         var previous = this.pending || Promise.resolve();
 
-        var taskWithTimeout = textsecure.createTaskWithTimeout(callback, 'conversation ' + this.id);
+        var taskWithTimeout = textsecure.createTaskWithTimeout(
+            callback,
+            'conversation ' + this.idForLogging()
+        );
 
         var current = this.pending = previous.then(taskWithTimeout, taskWithTimeout);
 
@@ -562,7 +586,14 @@
     sendMessage: function(body, attachments) {
         this.queueJob(function() {
             var now = Date.now();
-            console.log('Sending message to conversation', this.id, 'with timestamp', now);
+
+            console.log(
+                'Sending message to conversation',
+                this.idForLogging(),
+                'with timestamp',
+                now
+            );
+
             var message = this.messageCollection.add({
                 body           : body,
                 conversationId : this.id,
@@ -590,7 +621,13 @@
             else {
                 sendFunc = textsecure.messaging.sendMessageToGroup;
             }
-            message.send(sendFunc(this.get('id'), body, attachments, now, this.get('expireTimer')));
+
+            var profileKey;
+            if (this.get('profileSharing')) {
+               profileKey = storage.get('profileKey');
+            }
+
+            message.send(sendFunc(this.get('id'), body, attachments, now, this.get('expireTimer'), profileKey));
         }.bind(this));
     },
 
@@ -643,7 +680,11 @@
             else {
                 sendFunc = textsecure.messaging.sendExpirationTimerUpdateToGroup;
             }
-            message.send(sendFunc(this.get('id'), this.get('expireTimer'), message.get('sent_at')));
+            var profileKey;
+            if (this.get('profileSharing')) {
+               profileKey = storage.get('profileKey');
+            }
+            message.send(sendFunc(this.get('id'), this.get('expireTimer'), message.get('sent_at'), profileKey));
         }
         return message;
     },
@@ -758,6 +799,12 @@
         }.bind(this));
     },
 
+    onChangeProfileKey: function() {
+        if (this.isPrivate()) {
+            this.getProfiles();
+        }
+    },
+
     getProfiles: function() {
         // request all conversation members' keys
         var ids = [];
@@ -784,13 +831,84 @@
                   var sessionCipher = new libsignal.SessionCipher(textsecure.storage.protocol, address);
                   return sessionCipher.closeOpenSessionForDevice();
               }
-            });
-        }).catch(function(error) {
+            }).then(function() {
+              var c = ConversationController.get(id);
+              return Promise.all([
+                c.setProfileName(profile.name),
+                c.setProfileAvatar(profile.avatar)
+              ]).then(function() {
+                // success
+                return new Promise(function(resolve, reject) {
+                  c.save().then(resolve, reject);
+                });
+              }, function(e) {
+                // fail
+                if (e.name === 'ProfileDecryptError') {
+                  // probably the profile key has changed.
+                  console.log(
+                    'decryptProfile error:',
+                    id,
+                    profile,
+                    error && error.stack ? error.stack : error
+                  );
+                }
+              });
+            }.bind(this));
+        }.bind(this)).catch(function(error) {
             console.log(
                 'getProfile error:',
                 error && error.stack ? error.stack : error
             );
         });
+    },
+    setProfileName: function(encryptedName) {
+      var key = this.get('profileKey');
+      if (!key) { return; }
+
+      try {
+        // decode
+        var data = dcodeIO.ByteBuffer.wrap(encryptedName, 'base64').toArrayBuffer();
+
+        // decrypt
+        return textsecure.crypto.decryptProfileName(data, key).then(function(decrypted) {
+
+          // encode
+          var name = dcodeIO.ByteBuffer.wrap(decrypted).toString('utf8');
+
+          // set
+          this.set({profileName: name});
+        }.bind(this));
+      }
+      catch (e) {
+        return Promise.reject(e);
+      }
+    },
+    setProfileAvatar: function(avatarPath) {
+      if (!avatarPath) { return; }
+      return textsecure.messaging.getAvatar(avatarPath).then(function(avatar) {
+        var key = this.get('profileKey');
+        if (!key) { return; }
+        // decrypt
+        return textsecure.crypto.decryptProfile(avatar, key).then(function(decrypted) {
+          // set
+          this.set({
+            profileAvatar: {
+              data: decrypted,
+              contentType: 'image/jpeg',
+              size: decrypted.byteLength
+            }
+          });
+        }.bind(this));
+      }.bind(this));
+    },
+    setProfileKey: function(key) {
+      return new Promise(function(resolve, reject) {
+        if (!constantTimeEqualArrayBuffers(this.get('profileKey'), key)) {
+          this.save({profileKey: key}).then(resolve, reject);
+        } else {
+          resolve();
+        }
+      }.bind(this));
     },
 
     fetchMessages: function() {
@@ -855,6 +973,12 @@
         }
     },
 
+    getProfileName: function() {
+        if (this.isPrivate() && !this.get('name')) {
+          return this.get('profileName');
+        }
+    },
+
     getNumber: function() {
         if (!this.isPrivate()) {
             return '';
@@ -886,7 +1010,7 @@
 
     updateAvatarUrl: function(silent) {
         this.revokeAvatarUrl();
-        var avatar = this.get('avatar');
+        var avatar = this.get('avatar') || this.get('profileAvatar');
         if (avatar) {
             this.avatarUrl = URL.createObjectURL(
                 new Blob([avatar.data], {type: avatar.contentType})
@@ -930,7 +1054,7 @@
                 content: title ? title.trim()[0] : '#'
             };
         } else {
-            return { url: '/images/group_default.png', color: color };
+            return { url: 'images/group_default.png', color: color };
         }
     },
 
@@ -949,14 +1073,9 @@
         if (!message.isIncoming()) {
             return Promise.resolve();
         }
-        if (window.isOpen() && window.isFocused()) {
-            return Promise.resolve();
-        }
-
-        window.drawAttention();
         var conversationId = this.id;
 
-        ConversationController.getOrCreateAndWait(message.get('source'), 'private')
+        return ConversationController.getOrCreateAndWait(message.get('source'), 'private')
             .then(function(sender) {
                 return sender.getNotificationIcon().then(function(iconUrl) {
                     console.log('adding notification');

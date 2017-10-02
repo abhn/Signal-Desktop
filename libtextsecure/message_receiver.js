@@ -2,18 +2,26 @@
  * vim: ts=4:sw=4:expandtab
  */
 
-function MessageReceiver(url, ports, username, password, signalingKey) {
+function MessageReceiver(url, username, password, signalingKey, options) {
+    options = options || {};
+
     this.count = 0;
 
     this.url = url;
     this.signalingKey = signalingKey;
     this.username = username;
     this.password = password;
-    this.server = new TextSecureServer(url, ports, username, password);
+    this.server = new TextSecureServer(url, username, password);
 
     var address = libsignal.SignalProtocolAddress.fromString(username);
     this.number = address.getName();
     this.deviceId = address.getDeviceId();
+
+    this.pending = Promise.resolve();
+
+    if (options.retryCached) {
+        this.pending = this.queueAllCached();
+    }
 }
 
 MessageReceiver.prototype = new textsecure.EventTarget();
@@ -33,13 +41,12 @@ MessageReceiver.prototype.extend({
             keepalive: { path: '/v1/keepalive', disconnect: true }
         });
 
-        this.pending = this.queueAllCached();
-
         // Ensures that an immediate 'empty' event from the websocket will fire only after
         //   all cached envelopes are processed.
         this.incoming = [this.pending];
     },
     close: function() {
+        this.calledClose = true;
         this.socket.close(3000, 'called close');
         return this.drain();
     },
@@ -53,9 +60,22 @@ MessageReceiver.prototype.extend({
         return Promise.all(this.dispatchEvent(event));
     },
     onclose: function(ev) {
-        console.log('websocket closed', ev.code, ev.reason || '');
+        console.log(
+            'websocket closed',
+            ev.code,
+            ev.reason || '',
+            'calledClose:',
+            this.calledClose
+        );
+
+        if (this.calledClose) {
+            return;
+        }
         if (ev.code === 3000) {
             return;
+        }
+        if (ev.code === 3001) {
+            this.onEmpty();
         }
         // possible 403 or network issue. Make an request to confirm
         return this.server.getDevices(this.number)
@@ -236,7 +256,6 @@ MessageReceiver.prototype.extend({
     },
     addToCache: function(envelope, plaintext) {
         var id = this.getEnvelopeId(envelope);
-        console.log('addToCache', id);
         var data = {
             id: id,
             envelope: plaintext,
@@ -247,7 +266,6 @@ MessageReceiver.prototype.extend({
     },
     updateCache: function(envelope, plaintext) {
         var id = this.getEnvelopeId(envelope);
-        console.log('updateCache', id);
         var data = {
             decrypted: plaintext
         };
@@ -255,7 +273,6 @@ MessageReceiver.prototype.extend({
     },
     removeFromCache: function(envelope) {
         var id = this.getEnvelopeId(envelope);
-        console.log('removeFromCache', id);
         return textsecure.storage.unprocessed.remove(id);
     },
     queueDecryptedEnvelope: function(envelope, plaintext) {
@@ -483,10 +500,16 @@ MessageReceiver.prototype.extend({
             return this.handleDataMessage(envelope, content.dataMessage);
         } else if (content.nullMessage) {
             return this.handleNullMessage(envelope, content.nullMessage);
+        } else if (content.callMessage) {
+            return this.handleCallMessage(envelope, content.callMessage);
         } else {
             this.removeFromCache(envelope);
             throw new Error('Unsupported content message');
         }
+    },
+    handleCallMessage: function(envelope, nullMessage) {
+        console.log('call message from', this.getEnvelopeId(envelope));
+        this.removeFromCache(envelope);
     },
     handleNullMessage: function(envelope, nullMessage) {
         console.log('null message from', this.getEnvelopeId(envelope));
@@ -765,6 +788,9 @@ MessageReceiver.prototype.extend({
         } else if (decrypted.flags & textsecure.protobuf.DataMessage.Flags.EXPIRATION_TIMER_UPDATE ) {
             decrypted.body = null;
             decrypted.attachments = [];
+        } else if (decrypted.flags & textsecure.protobuf.DataMessage.Flags.PROFILE_KEY_UPDATE) {
+            decrypted.body = null;
+            decrypted.attachments = [];
         } else if (decrypted.flags != 0) {
             throw new Error("Unknown flags in message");
         }
@@ -837,8 +863,8 @@ MessageReceiver.prototype.extend({
 
 window.textsecure = window.textsecure || {};
 
-textsecure.MessageReceiver = function(url, ports, username, password, signalingKey) {
-    var messageReceiver = new MessageReceiver(url, ports, username, password, signalingKey);
+textsecure.MessageReceiver = function(url, username, password, signalingKey, options) {
+    var messageReceiver = new MessageReceiver(url, username, password, signalingKey, options);
     this.addEventListener    = messageReceiver.addEventListener.bind(messageReceiver);
     this.removeEventListener = messageReceiver.removeEventListener.bind(messageReceiver);
     this.getStatus           = messageReceiver.getStatus.bind(messageReceiver);

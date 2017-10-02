@@ -36716,6 +36716,11 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
     var calculateMAC = libsignal.crypto.calculateMAC;
     var verifyMAC    = libsignal.crypto.verifyMAC;
 
+    var PROFILE_IV_LENGTH = 12;   // bytes
+    var PROFILE_KEY_LENGTH = 32;  // bytes
+    var PROFILE_TAG_LENGTH = 128; // bits
+    var PROFILE_NAME_PADDED_LENGTH = 26; // bytes
+
     function verifyDigest(data, theirDigest) {
         return crypto.subtle.digest({name: 'SHA-256'}, data).then(function(ourDigest) {
             var a = new Uint8Array(ourDigest);
@@ -36812,6 +36817,68 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
                 });
             });
         },
+        encryptProfile: function(data, key) {
+          var iv = libsignal.crypto.getRandomBytes(PROFILE_IV_LENGTH);
+          if (key.byteLength != PROFILE_KEY_LENGTH) {
+              throw new Error("Got invalid length profile key");
+          }
+          if (iv.byteLength != PROFILE_IV_LENGTH) {
+              throw new Error("Got invalid length profile iv");
+          }
+          return crypto.subtle.importKey('raw', key, {name: 'AES-GCM'}, false, ['encrypt']).then(function(key) {
+            return crypto.subtle.encrypt({name: 'AES-GCM', iv: iv, tagLength: PROFILE_TAG_LENGTH}, key, data).then(function(ciphertext) {
+              var ivAndCiphertext = new Uint8Array(PROFILE_IV_LENGTH + ciphertext.byteLength);
+              ivAndCiphertext.set(new Uint8Array(iv));
+              ivAndCiphertext.set(new Uint8Array(ciphertext), PROFILE_IV_LENGTH);
+              return ivAndCiphertext.buffer;
+            });
+          });
+        },
+        decryptProfile: function(data, key) {
+          if (data.byteLength < 12 + 16 + 1) {
+              throw new Error("Got too short input: " + data.byteLength);
+          }
+          var iv = data.slice(0, PROFILE_IV_LENGTH);
+          var ciphertext = data.slice(PROFILE_IV_LENGTH, data.byteLength);
+          if (key.byteLength != PROFILE_KEY_LENGTH) {
+              throw new Error("Got invalid length profile key");
+          }
+          if (iv.byteLength != PROFILE_IV_LENGTH) {
+              throw new Error("Got invalid length profile iv");
+          }
+          var error = new Error(); // save stack
+          return crypto.subtle.importKey('raw', key, {name: 'AES-GCM'}, false, ['decrypt']).then(function(key) {
+            return crypto.subtle.decrypt({name: 'AES-GCM', iv: iv, tagLength: PROFILE_TAG_LENGTH}, key, ciphertext).catch(function(e) {
+              if (e.name === 'OperationError') {
+                // bad mac, basically.
+                error.message = 'Failed to decrypt profile data. Most likely the profile key has changed.';
+                error.name = 'ProfileDecryptError';
+                throw error;
+              }
+            });
+          });
+        },
+        encryptProfileName: function(name, key) {
+          var padded = new Uint8Array(PROFILE_NAME_PADDED_LENGTH);
+          padded.set(new Uint8Array(name));
+          return textsecure.crypto.encryptProfile(padded.buffer, key);
+        },
+        decryptProfileName: function(encryptedProfileName, key) {
+          var data = dcodeIO.ByteBuffer.wrap(encryptedProfileName, 'base64').toArrayBuffer();
+          return textsecure.crypto.decryptProfile(data, key).then(function(decrypted) {
+            // unpad
+            var name = '';
+            var padded = new Uint8Array(decrypted);
+            for (var i = padded.length; i > 0; i--) {
+              if (padded[i-1] !== 0x00) {
+                break;
+              }
+            }
+
+            return dcodeIO.ByteBuffer.wrap(padded).slice(0, i).toArrayBuffer();
+          });
+        },
+
 
         getRandomBytes: function(size) {
             return libsignal.crypto.getRandomBytes(size);
@@ -37095,11 +37162,22 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
     window.textsecure.protobuf = {};
 
     function loadProtoBufs(filename) {
-        return dcodeIO.ProtoBuf.loadProtoFile({root: '/protos', file: filename}, function(error, result) {
-           var protos = result.build('textsecure');
-           for (var protoName in protos) {
-              textsecure.protobuf[protoName] = protos[protoName];
-           }
+        return dcodeIO.ProtoBuf.loadProtoFile({root: window.PROTO_ROOT, file: filename}, function(error, result) {
+            if (error) {
+                var text = 'Error loading protos from ' + filename + ' (root: ' + window.PROTO_ROOT + ') '
+                    + (error && error.stack ? error.stack : error);
+                console.log(text);
+                throw error;
+            }
+            var protos = result.build('textsecure');
+            if (!protos) {
+                var text = 'Error loading protos from ' + filename + ' (root: ' + window.PROTO_ROOT + ')';
+                console.log(text);
+                throw new Error(text);
+            }
+            for (var protoName in protos) {
+                textsecure.protobuf[protoName] = protos[protoName];
+            }
         });
     };
 
@@ -37204,9 +37282,8 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
 
         socket.onmessage = function(socketMessage) {
             var blob = socketMessage.data;
-            var reader = new FileReader();
-            reader.onload = function() {
-                var message = textsecure.protobuf.WebSocketMessage.decode(reader.result);
+            var handleArrayBuffer = function(buffer) {
+                var message = textsecure.protobuf.WebSocketMessage.decode(buffer);
                 if (message.type === textsecure.protobuf.WebSocketMessage.Type.REQUEST ) {
                     handleRequest(
                         new IncomingWebSocketRequest({
@@ -37236,7 +37313,16 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
                     }
                 }
             };
-            reader.readAsArrayBuffer(blob);
+
+            if (blob instanceof ArrayBuffer) {
+              handleArrayBuffer(blob);
+            } else {
+              var reader = new FileReader();
+              reader.onload = function() {
+                handleArrayBuffer(reader.result);
+              };
+              reader.readAsArrayBuffer(blob);
+            }
         };
 
         if (opts.keepalive) {
@@ -37284,6 +37370,7 @@ Internal.SessionLock.queueJobForNumber = function queueJobForNumber(number, runJ
             clearTimeout(this.keepAliveTimer);
             clearTimeout(this.disconnectTimer);
             this.keepAliveTimer = setTimeout(function() {
+                console.log('Sending a keepalive message');
                 this.wsr.sendRequest({
                     verb: 'GET',
                     path: this.path,
@@ -37557,20 +37644,6 @@ window.textsecure.utils = function() {
  * vim: ts=4:sw=4:expandtab
  */
 
-function PortManager(ports) {
-    this.ports = ports;
-    this.idx = 0;
-}
-
-PortManager.prototype = {
-    constructor: PortManager,
-    getPort: function() {
-        var port = this.ports[this.idx];
-        this.idx = (this.idx + 1) % this.ports.length;
-        return port;
-    }
-};
-
 var TextSecureServer = (function() {
     'use strict';
 
@@ -37593,11 +37666,33 @@ var TextSecureServer = (function() {
         return true;
     }
 
+    // On Linux/Electron multiple quick web requests can result in the Node.js event
+    //   loop getting wedged. Bug: https://github.com/electron/electron/issues/10570
+    //   This forces the event loop to move.
+    function scheduleHangWorkaround() {
+        setTimeout(function() {
+            setImmediate(function() {
+                // noop
+            });
+        }, 1000);
+    }
+
+    function createSocket(url) {
+      var requestOptions = { ca: window.config.certificateAuthorities };
+
+      scheduleHangWorkaround();
+
+      return new nodeWebSocket(url, null, null, null, requestOptions);
+    }
+
+    var XMLHttpRequest = nodeXMLHttpRequest;
+    window.setImmediate = nodeSetImmediate;
+
     // Promise-based async xhr routine
     function promise_ajax(url, options) {
         return new Promise(function (resolve, reject) {
             if (!url) {
-                url = options.host + ':' + options.port + '/' + options.path;
+                url = options.host +  '/' + options.path;
             }
             console.log(options.type, url);
             var xhr = new XMLHttpRequest();
@@ -37614,6 +37709,9 @@ var TextSecureServer = (function() {
             }
             xhr.setRequestHeader( 'X-Signal-Agent', 'OWD' );
 
+            if (options.certificateAuthorities) {
+              xhr.setCertificateAuthorities(options.certificateAuthorities);
+            }
 
             xhr.onload = function() {
                 var result = xhr.response;
@@ -37640,18 +37738,18 @@ var TextSecureServer = (function() {
             };
             xhr.onerror = function() {
                 console.log(options.type, url, xhr.status, 'Error');
-                reject(HTTPError(xhr.status, null, options.stack));
+                console.log(xhr.statusText);
+                reject(HTTPError(xhr.status, xhr.statusText, options.stack));
             };
             xhr.send( options.data || null );
+
+            scheduleHangWorkaround();
         });
     }
 
     function retry_ajax(url, options, limit, count) {
         count = count || 0;
         limit = limit || 3;
-        if (options.ports) {
-            options.port = options.ports[count % options.ports.length];
-        }
         count++;
         return promise_ajax(url, options).catch(function(e) {
             if (e.name === 'HTTPError' && e.code === -1 && count < limit) {
@@ -37695,28 +37793,24 @@ var TextSecureServer = (function() {
         profile    : "v1/profile"
     };
 
-    function TextSecureServer(url, ports, username, password) {
+    function TextSecureServer(url, username, password, cdn_url) {
         if (typeof url !== 'string') {
             throw new Error('Invalid server url');
         }
-        this.portManager = new PortManager(ports);
         this.url = url;
+        this.cdn_url = cdn_url;
         this.username = username;
         this.password = password;
     }
 
     TextSecureServer.prototype = {
         constructor: TextSecureServer,
-        getUrl: function() {
-            return this.url + ':' + this.portManager.getPort();
-        },
         ajax: function(param) {
             if (!param.urlParameters) {
                 param.urlParameters = '';
             }
             return ajax(null, {
                     host        : this.url,
-                    ports       : this.portManager.ports,
                     path        : URL_CALLS[param.call] + param.urlParameters,
                     type        : param.httpType,
                     data        : param.jsonData && textsecure.utils.jsonThing(param.jsonData),
@@ -37724,7 +37818,8 @@ var TextSecureServer = (function() {
                     dataType    : 'json',
                     user        : this.username,
                     password    : this.password,
-                    validateResponse: param.validateResponse
+                    validateResponse: param.validateResponse,
+                    certificateAuthorities: window.config.certificateAuthorities
             }).catch(function(e) {
                 var code = e.code;
                 if (code === 200) {
@@ -37765,6 +37860,14 @@ var TextSecureServer = (function() {
                 call                : 'profile',
                 httpType            : 'GET',
                 urlParameters       : '/' + number,
+            });
+        },
+        getAvatar: function(path) {
+            return ajax(this.cdn_url + '/' + path, {
+                type        : "GET",
+                responseType: "arraybuffer",
+                contentType : "application/octet-stream",
+                certificateAuthorities: window.config.certificateAuthorities
             });
         },
         requestVerificationSMS: function(number) {
@@ -37936,22 +38039,16 @@ var TextSecureServer = (function() {
             }.bind(this));
         },
         getMessageSocket: function() {
-            var url = this.getUrl();
-            console.log('opening message socket', url);
-            return new WebSocket(
-                url.replace('https://', 'wss://').replace('http://', 'ws://')
+            console.log('opening message socket', this.url);
+            return createSocket(this.url.replace('https://', 'wss://').replace('http://', 'ws://')
                     + '/v1/websocket/?login=' + encodeURIComponent(this.username)
                     + '&password=' + encodeURIComponent(this.password)
-                    + '&agent=OWD'
-            );
+                    + '&agent=OWD');
         },
         getProvisioningSocket: function () {
-            var url = this.getUrl();
-            console.log('opening provisioning socket', url);
-            return new WebSocket(
-                url.replace('https://', 'wss://').replace('http://', 'ws://')
-                    + '/v1/websocket/provisioning/?agent=OWD'
-            );
+            console.log('opening provisioning socket', this.url);
+            return createSocket(this.url.replace('https://', 'wss://').replace('http://', 'ws://')
+                    + '/v1/websocket/provisioning/?agent=OWD');
         }
     };
 
@@ -37969,8 +38066,8 @@ var TextSecureServer = (function() {
 
     var ARCHIVE_AGE = 7 * 24 * 60 * 60 * 1000;
 
-    function AccountManager(url, ports, username, password) {
-        this.server = new TextSecureServer(url, ports, username, password);
+    function AccountManager(url, username, password) {
+        this.server = new TextSecureServer(url, username, password);
         this.pending = Promise.resolve();
     }
 
@@ -37990,7 +38087,8 @@ var TextSecureServer = (function() {
             var registrationDone = this.registrationDone.bind(this);
             return this.queueTask(function() {
                 return libsignal.KeyHelper.generateIdentityKeyPair().then(function(identityKeyPair) {
-                    return createAccount(number, verificationCode, identityKeyPair).
+                    var profileKey = textsecure.crypto.getRandomBytes(32);
+                    return createAccount(number, verificationCode, identityKeyPair, profileKey).
                         then(generateKeys).
                         then(registerKeys).
                         then(registrationDone);
@@ -38043,6 +38141,7 @@ var TextSecureServer = (function() {
                                                 provisionMessage.number,
                                                 provisionMessage.provisioningCode,
                                                 provisionMessage.identityKeyPair,
+                                                provisionMessage.profileKey,
                                                 deviceName,
                                                 provisionMessage.userAgent
                                             ).then(generateKeys).
@@ -38143,7 +38242,7 @@ var TextSecureServer = (function() {
                 });
             });
         },
-        createAccount: function(number, verificationCode, identityKeyPair, deviceName, userAgent) {
+        createAccount: function(number, verificationCode, identityKeyPair, profileKey, deviceName, userAgent) {
             var signalingKey = libsignal.crypto.getRandomBytes(32 + 20);
             var password = btoa(getString(libsignal.crypto.getRandomBytes(16)));
             password = password.substring(0, password.length - 2);
@@ -38161,6 +38260,7 @@ var TextSecureServer = (function() {
                     textsecure.storage.remove('device_name');
                     textsecure.storage.remove('regionCode');
                     textsecure.storage.remove('userAgent');
+                    textsecure.storage.remove('profileKey');
 
                     // update our own identity key, which may have changed
                     // if we're relinking after a reinstall on the master device
@@ -38177,6 +38277,9 @@ var TextSecureServer = (function() {
                     textsecure.storage.put('signaling_key', signalingKey);
                     textsecure.storage.put('password', password);
                     textsecure.storage.put('registrationId', registrationId);
+                    if (profileKey) {
+                        textsecure.storage.put('profileKey', profileKey);
+                    }
                     if (userAgent) {
                         textsecure.storage.put('userAgent', userAgent);
                     }
@@ -38253,18 +38356,26 @@ var TextSecureServer = (function() {
  * vim: ts=4:sw=4:expandtab
  */
 
-function MessageReceiver(url, ports, username, password, signalingKey) {
+function MessageReceiver(url, username, password, signalingKey, options) {
+    options = options || {};
+
     this.count = 0;
 
     this.url = url;
     this.signalingKey = signalingKey;
     this.username = username;
     this.password = password;
-    this.server = new TextSecureServer(url, ports, username, password);
+    this.server = new TextSecureServer(url, username, password);
 
     var address = libsignal.SignalProtocolAddress.fromString(username);
     this.number = address.getName();
     this.deviceId = address.getDeviceId();
+
+    this.pending = Promise.resolve();
+
+    if (options.retryCached) {
+        this.pending = this.queueAllCached();
+    }
 }
 
 MessageReceiver.prototype = new textsecure.EventTarget();
@@ -38284,13 +38395,12 @@ MessageReceiver.prototype.extend({
             keepalive: { path: '/v1/keepalive', disconnect: true }
         });
 
-        this.pending = this.queueAllCached();
-
         // Ensures that an immediate 'empty' event from the websocket will fire only after
         //   all cached envelopes are processed.
         this.incoming = [this.pending];
     },
     close: function() {
+        this.calledClose = true;
         this.socket.close(3000, 'called close');
         return this.drain();
     },
@@ -38304,9 +38414,22 @@ MessageReceiver.prototype.extend({
         return Promise.all(this.dispatchEvent(event));
     },
     onclose: function(ev) {
-        console.log('websocket closed', ev.code, ev.reason || '');
+        console.log(
+            'websocket closed',
+            ev.code,
+            ev.reason || '',
+            'calledClose:',
+            this.calledClose
+        );
+
+        if (this.calledClose) {
+            return;
+        }
         if (ev.code === 3000) {
             return;
+        }
+        if (ev.code === 3001) {
+            this.onEmpty();
         }
         // possible 403 or network issue. Make an request to confirm
         return this.server.getDevices(this.number)
@@ -38487,7 +38610,6 @@ MessageReceiver.prototype.extend({
     },
     addToCache: function(envelope, plaintext) {
         var id = this.getEnvelopeId(envelope);
-        console.log('addToCache', id);
         var data = {
             id: id,
             envelope: plaintext,
@@ -38498,7 +38620,6 @@ MessageReceiver.prototype.extend({
     },
     updateCache: function(envelope, plaintext) {
         var id = this.getEnvelopeId(envelope);
-        console.log('updateCache', id);
         var data = {
             decrypted: plaintext
         };
@@ -38506,7 +38627,6 @@ MessageReceiver.prototype.extend({
     },
     removeFromCache: function(envelope) {
         var id = this.getEnvelopeId(envelope);
-        console.log('removeFromCache', id);
         return textsecure.storage.unprocessed.remove(id);
     },
     queueDecryptedEnvelope: function(envelope, plaintext) {
@@ -38734,10 +38854,16 @@ MessageReceiver.prototype.extend({
             return this.handleDataMessage(envelope, content.dataMessage);
         } else if (content.nullMessage) {
             return this.handleNullMessage(envelope, content.nullMessage);
+        } else if (content.callMessage) {
+            return this.handleCallMessage(envelope, content.callMessage);
         } else {
             this.removeFromCache(envelope);
             throw new Error('Unsupported content message');
         }
+    },
+    handleCallMessage: function(envelope, nullMessage) {
+        console.log('call message from', this.getEnvelopeId(envelope));
+        this.removeFromCache(envelope);
     },
     handleNullMessage: function(envelope, nullMessage) {
         console.log('null message from', this.getEnvelopeId(envelope));
@@ -39016,6 +39142,9 @@ MessageReceiver.prototype.extend({
         } else if (decrypted.flags & textsecure.protobuf.DataMessage.Flags.EXPIRATION_TIMER_UPDATE ) {
             decrypted.body = null;
             decrypted.attachments = [];
+        } else if (decrypted.flags & textsecure.protobuf.DataMessage.Flags.PROFILE_KEY_UPDATE) {
+            decrypted.body = null;
+            decrypted.attachments = [];
         } else if (decrypted.flags != 0) {
             throw new Error("Unknown flags in message");
         }
@@ -39088,8 +39217,8 @@ MessageReceiver.prototype.extend({
 
 window.textsecure = window.textsecure || {};
 
-textsecure.MessageReceiver = function(url, ports, username, password, signalingKey) {
-    var messageReceiver = new MessageReceiver(url, ports, username, password, signalingKey);
+textsecure.MessageReceiver = function(url, username, password, signalingKey, options) {
+    var messageReceiver = new MessageReceiver(url, username, password, signalingKey, options);
     this.addEventListener    = messageReceiver.addEventListener.bind(messageReceiver);
     this.removeEventListener = messageReceiver.removeEventListener.bind(messageReceiver);
     this.getStatus           = messageReceiver.getStatus.bind(messageReceiver);
@@ -39373,6 +39502,7 @@ function Message(options) {
     this.timestamp   = options.timestamp;
     this.needsSync   = options.needsSync;
     this.expireTimer = options.expireTimer;
+    this.profileKey  = options.profileKey;
 
     if (!(this.recipients instanceof Array) || this.recipients.length < 1) {
         throw new Error('Invalid recipient list');
@@ -39446,6 +39576,10 @@ Message.prototype = {
             proto.expireTimer = this.expireTimer;
         }
 
+        if (this.profileKey) {
+          proto.profileKey = this.profileKey;
+        }
+
         this.dataMessage = proto;
         return proto;
     },
@@ -39454,8 +39588,8 @@ Message.prototype = {
     }
 };
 
-function MessageSender(url, ports, username, password) {
-    this.server = new TextSecureServer(url, ports, username, password);
+function MessageSender(url, username, password, cdn_url) {
+    this.server = new TextSecureServer(url, username, password, cdn_url);
     this.pendingMessages = {};
 }
 
@@ -39669,6 +39803,9 @@ MessageSender.prototype = {
     getProfile: function(number) {
         return this.server.getProfile(number);
     },
+    getAvatar: function(path) {
+        return this.server.getAvatar(path);
+    },
 
     sendRequestGroupSyncMessage: function() {
         var myNumber = textsecure.storage.user.getNumber();
@@ -39779,14 +39916,15 @@ MessageSender.prototype = {
         }.bind(this));
     },
 
-    sendMessageToNumber: function(number, messageText, attachments, timestamp, expireTimer) {
+    sendMessageToNumber: function(number, messageText, attachments, timestamp, expireTimer, profileKey) {
         return this.sendMessage({
             recipients  : [number],
             body        : messageText,
             timestamp   : timestamp,
             attachments : attachments,
             needsSync   : true,
-            expireTimer : expireTimer
+            expireTimer : expireTimer,
+            profileKey  : profileKey
         });
     },
 
@@ -39811,7 +39949,7 @@ MessageSender.prototype = {
         }.bind(this));
     },
 
-    sendMessageToGroup: function(groupId, messageText, attachments, timestamp, expireTimer) {
+    sendMessageToGroup: function(groupId, messageText, attachments, timestamp, expireTimer, profileKey) {
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
             if (numbers === undefined)
                 return Promise.reject(new Error("Unknown Group"));
@@ -39829,6 +39967,7 @@ MessageSender.prototype = {
                 attachments : attachments,
                 needsSync   : true,
                 expireTimer : expireTimer,
+                profileKey  : profileKey,
                 group: {
                     id: groupId,
                     type: textsecure.protobuf.GroupContext.Type.DELIVER
@@ -39944,7 +40083,7 @@ MessageSender.prototype = {
             }.bind(this));
         });
     },
-    sendExpirationTimerUpdateToGroup: function(groupId, expireTimer, timestamp) {
+    sendExpirationTimerUpdateToGroup: function(groupId, expireTimer, timestamp, profileKey) {
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
             if (numbers === undefined)
                 return Promise.reject(new Error("Unknown Group"));
@@ -39959,6 +40098,7 @@ MessageSender.prototype = {
                 timestamp   : timestamp,
                 needsSync   : true,
                 expireTimer : expireTimer,
+                profileKey  : profileKey,
                 flags       : textsecure.protobuf.DataMessage.Flags.EXPIRATION_TIMER_UPDATE,
                 group: {
                     id: groupId,
@@ -39967,13 +40107,14 @@ MessageSender.prototype = {
             });
         }.bind(this));
     },
-    sendExpirationTimerUpdateToNumber: function(number, expireTimer, timestamp) {
+    sendExpirationTimerUpdateToNumber: function(number, expireTimer, timestamp, profileKey) {
         var proto = new textsecure.protobuf.DataMessage();
         return this.sendMessage({
             recipients  : [number],
             timestamp   : timestamp,
             needsSync   : true,
             expireTimer : expireTimer,
+            profileKey  : profileKey,
             flags       : textsecure.protobuf.DataMessage.Flags.EXPIRATION_TIMER_UPDATE
         });
     }
@@ -39981,8 +40122,8 @@ MessageSender.prototype = {
 
 window.textsecure = window.textsecure || {};
 
-textsecure.MessageSender = function(url, ports, username, password) {
-    var sender = new MessageSender(url, ports, username, password);
+textsecure.MessageSender = function(url, username, password, cdn_url) {
+    var sender = new MessageSender(url, username, password, cdn_url);
     textsecure.replay.registerFunction(sender.tryMessageAgain.bind(sender), textsecure.replay.Type.ENCRYPT_MESSAGE);
     textsecure.replay.registerFunction(sender.retransmitMessage.bind(sender), textsecure.replay.Type.TRANSMIT_MESSAGE);
     textsecure.replay.registerFunction(sender.sendMessage.bind(sender), textsecure.replay.Type.REBUILD_MESSAGE);
@@ -40003,6 +40144,7 @@ textsecure.MessageSender = function(url, ports, username, password) {
     this.leaveGroup                        = sender.leaveGroup                       .bind(sender);
     this.sendSyncMessage                   = sender.sendSyncMessage                  .bind(sender);
     this.getProfile                        = sender.getProfile                       .bind(sender);
+    this.getAvatar                         = sender.getAvatar                        .bind(sender);
     this.syncReadMessages                  = sender.syncReadMessages                 .bind(sender);
     this.syncVerification                  = sender.syncVerification                 .bind(sender);
 };
@@ -40127,6 +40269,10 @@ ProtoParser.prototype = {
                 this.buffer.skip(attachmentLen);
             }
 
+            if (proto.profileKey) {
+                proto.profileKey = proto.profileKey.toArrayBuffer();
+            }
+
             return proto;
         } catch(e) {
             console.log(e);
@@ -40177,12 +40323,16 @@ ProvisioningCipher.prototype = {
             var privKey = provisionMessage.identityKeyPrivate.toArrayBuffer();
 
             return libsignal.Curve.async.createKeyPair(privKey).then(function(keyPair) {
-                return {
+                var ret = {
                     identityKeyPair  : keyPair,
                     number           : provisionMessage.number,
                     provisioningCode : provisionMessage.provisioningCode,
-                    userAgent        : provisionMessage.userAgent
+                    userAgent        : provisionMessage.userAgent,
                 };
+                if (provisionMessage.profileKey) {
+                  ret.profileKey = provisionMessage.profileKey.toArrayBuffer();
+                }
+                return ret;
             });
         });
     },

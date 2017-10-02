@@ -3,21 +3,21 @@
       "message": "Loading...",
       "description": "Message shown on the loading screen before we've loaded any messages"
     },
-    "migrationWarning": {
-      "message": "The Signal Desktop Chrome app has been deprecated. Would you like to migrate to the new Signal Desktop now?",
-      "description": "Warning notification that this version of the app has been deprecated and the user must migrate"
-    },
     "exportInstructions": {
       "message": "The first step is to choose a directory to store this application's exported data. It will contain your message history and sensitive cryptographic data, so be sure to save it somewhere private.",
       "description": "Description of the export process"
     },
-    "migrate": {
-      "message": "Migrate",
-      "description": "Button label to begin migrating this client to Electron"
-    },
-    "export": {
+    "chooseDirectory": {
       "message": "Choose directory",
       "description": "Button to allow the user to export all data from app as part of migration process"
+    },
+    "exportButton": {
+      "message": "Export",
+      "desription": "Button shown on the choose directory dialog which starts the export process"
+    },
+    "exportChooserTitle": {
+      "message": "Choose target directory for data",
+      "description": "Title of the popup window used to select data storage location"
     },
     "exportAgain": {
       "message": "Export again",
@@ -27,20 +27,12 @@
       "message": "Unfortunately, something went wrong during the export. First, double-check your target empty directory for write access and enough space. Then, please submit a debug log so we can help you get migrated!",
       "description": "Helper text if the user went forward on migrating the app, but ran into an error"
     },
-    "confirmMigration": {
-      "message": "Start migration process? You will not be able to send or receive Signal messages from this application while the migration is in progress.",
-      "description": "Confirmation dialogue when beginning migration"
-    },
-    "migrationDisconnecting": {
-      "message": "Disconnecting...",
-      "description": "Displayed while we wait for pending incoming messages to process"
-    },
     "exporting": {
-      "message": "Please wait while we export your data. You can still use Signal on your phone and other devices during this time. You can also <a target='_blank' href='https://support.whispersystems.org/hc/en-us/articles/214507138-How-do-I-install-Signal-Desktop-'>install the new Signal Desktop</a>.",
+      "message": "Please wait while we export your data. It may take several minutes. You can still use Signal on your phone and other devices during this time.",
       "description": "Message shown on the migration screen while we export data"
     },
     "exportComplete": {
-      "message": "Your data has been exported to: <p><b>$location$</b></p> To complete the migration, <a target='_blank' href='https://support.whispersystems.org/hc/en-us/articles/214507138-How-do-I-install-Signal-Desktop-'>install the new Signal Desktop</a> and import this data.",
+      "message": "Your data has been exported to: <p><b>$location$</b></p> You'll be able to import this data as you set up <a target='_blank' href='https://support.whispersystems.org/hc/en-us/articles/214507138'>the new Signal Desktop</a>.",
       "description": "Message shown on the migration screen when we are done exporting data",
       "placeholders": {
         "location": {
@@ -48,6 +40,38 @@
           "example": "/Users/someone/somewhere"
         }
       }
+    },
+    "installNewSignal": {
+      "message": "Install new Signal Desktop",
+      "description": "When export is complete, a button shows which sends user to Signal Desktop install instructions"
+    },
+    "importButton": {
+      "message": "Import",
+      "desription": "Button shown on the choose directory dialog which starts the import process"
+    },
+    "importChooserTitle": {
+      "message": "Choose directory with exported data",
+      "description": "Title of the popup window used to select data previously exported"
+    },
+    "importError": {
+      "message": "Unfortunately, something went wrong during the import. <p>First, double-check your target directory. It should start with 'Signal Export.'</p><p>Next, try with a new export of your data from the Chrome App.</p>If that still fails, please <a target='_blank' href='https://support.whispersystems.org/hc/en-us/articles/215188737'>submit a debug log</a> so we can help you get migrated!",
+      "description": "Message shown if the import went wrong."
+    },
+    "tryAgain": {
+      "message": "Try again",
+      "description": "Button shown if the user runs into an error during import, allowing them to start over"
+    },
+    "importInstructions": {
+      "message": "The first step is to tell us where you previously exported your Signal data. It will be a directory whose name starts with 'Signal Export.'",
+      "description": "Description of the export process"
+    },
+    "importing": {
+      "message": "Please wait while we import your data...",
+      "description": "Shown as we are loading the user's data from disk"
+    },
+    "importComplete": {
+      "message": "We've successfully loaded your data. The next step is to restart the application!",
+      "description": "Shown when the import is complete."
     },
     "selectedLocation": {
       "message": "your selected location",
@@ -438,12 +462,20 @@
         "message": "Privacy is possible. Signal makes it easy.",
         "description": "Tagline displayed under 'installWelcome' string on the install page"
     },
+    "installNew": {
+        "message": "Set up as new install",
+        "description": "One of two choices presented on the screen shown on first launch"
+    },
+    "installImport": {
+        "message": "Set up with Chrome App export",
+        "description": "One of two choices presented on the screen shown on first launch"
+    },
     "installGetStartedButton": {
         "message": "Get started"
     },
     "installSignalLink": {
-        "message": "First, install <a $a_params$>Signal</a> on your Android phone.<br /> We'll link your devices and keep your messages in sync.",
-        "description": "Prompt the user to install Signal on Android before linking",
+        "message": "First, install <a $a_params$>Signal</a> on your mobile phone. We'll link your devices and keep your messages in sync.",
+        "description": "Prompt the user to install Signal on their phone before linking",
         "placeholders": {
           "a_params": {
             "content": "$1",
@@ -800,5 +832,20 @@
     },
     "relink": {
         "message": "Relink"
+    },
+    "autoUpdateNewVersionTitle": {
+      "message": "Signal update available"
+    },
+    "autoUpdateNewVersionMessage": {
+      "message": "There is a new version of Signal available."
+    },
+    "autoUpdateNewVersionInstructions": {
+      "message": "Press Restart to apply the updates."
+    },
+    "autoUpdateRestartButtonLabel": {
+      "message": "Restart"
+    },
+    "autoUpdateLaterButtonLabel": {
+      "message": "Later"
     }
 }

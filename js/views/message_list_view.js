@@ -48,6 +48,11 @@
             this.$el.scrollTop(this.scrollPosition - this.$el.outerHeight());
         },
         scrollToBottomIfNeeded: function() {
+            // This is counter-intuitive. Our current bottomOffset is reflective of what
+            //   we last measured, not necessarily the current state. And this is called
+            //   after we just made a change to the DOM: inserting a message, or an image
+            //   finished loading. So if we were near the bottom before, we _need_ to be
+            //   at the bottom again. So we scroll to the bottom.
             if (this.atBottom()) {
                 this.scrollToBottom();
             }

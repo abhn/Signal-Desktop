@@ -12,129 +12,106 @@
         MESSAGE : 'message'
     };
 
-    var sound = new Audio('/audio/NewMessage.mp3');
+    var enabled = false;
 
     Whisper.Notifications = new (Backbone.Collection.extend({
         initialize: function() {
-            this.on('add', _.debounce(this.update.bind(this), 1000));
+            this.on('add', this.update);
             this.on('remove', this.onRemove);
         },
-        onclick: function() {
-            var last = this.last();
-            if (!last) {
-                openInbox();
-                return;
-            }
-            var conversation = ConversationController.get(last.get('conversationId'));
-            openConversation(conversation);
-            this.clear();
+        onClick: function(conversationId) {
+            var conversation = ConversationController.get(conversationId);
+            this.trigger('click', conversation);
         },
         update: function() {
-            console.log('updating notifications', this.length);
-            extension.notification.clear();
+            console.log(
+                'updating notifications - count:', this.length,
+                'focused:', window.isFocused(),
+                'enabled:', enabled
+            );
+            if (!enabled) {
+                return; // wait til we are re-enabled
+            }
             if (this.length === 0) {
                 return;
             }
-            var audioNotification = storage.get('audio-notification') || false;
-            if (audioNotification) {
-                sound.play();
+            if (window.isFocused()) {
+                // The window is focused. Consider yourself notified.
+                this.clear();
+                return;
             }
+
+            window.drawAttention();
+
+            var audioNotification = storage.get('audio-notification') || false;
 
             var setting = storage.get('notification-setting') || 'message';
             if (setting === SETTINGS.OFF) {
                 return;
             }
 
-            var iconUrl = 'images/icon_128.png';
-            var title = [
+            var title;
+            var message;
+            var iconUrl;
+
+            var newMessageCount = [
                 this.length,
                 this.length === 1 ? i18n('newMessage') : i18n('newMessages')
             ].join(' ');
 
-            if (setting === SETTINGS.COUNT) {
-                extension.notification.update({
-                    type     : 'basic',
-                    title    : title,
-                    iconUrl  : iconUrl
-                });
-                return;
+            var last = this.last();
+            switch (this.getSetting()) {
+              case SETTINGS.COUNT:
+                title = 'Signal';
+                message = newMessageCount;
+                break;
+              case SETTINGS.NAME:
+                title = newMessageCount;
+                message = 'Most recent from ' + last.get('title');
+                iconUrl = last.get('iconUrl');
+                break;
+              case SETTINGS.MESSAGE:
+                if (this.length === 1) {
+                  title = last.get('title');
+                } else {
+                  title = newMessageCount;
+                }
+                message = last.get('message');
+                iconUrl = last.get('iconUrl');
+                break;
             }
+            var notification = new Notification(title, {
+                body   : message,
+                icon   : iconUrl,
+                tag    : 'signal',
+                silent : !audioNotification
+            });
 
-            if (this.length > 1) {
-                var conversationIds = _.uniq(this.map(function(m) {
-                    return m.get('conversationId');
-                }));
-                if (conversationIds.length === 1 && this.showSender()) {
-                    iconUrl = this.at(0).get('iconUrl');
-                }
-                extension.notification.update({
-                    type    : 'list',
-                    iconUrl : iconUrl,
-                    title   : title,
-                    message : 'Most recent from ' + this.last().get('title'),
-                    items   : this.map(function(m) {
-                        var message, title;
-                        if (this.showMessage()) {
-                            return {
-                                title   : m.get('title'),
-                                message : m.get('message')
-                            };
-                        } else if (this.showSender()) {
-                            return {
-                                title   : m.get('title'),
-                                message : i18n('newMessage')
-                            };
-                        }
-                    }.bind(this)),
-                    buttons : [{
-                        title   : 'Mark all as read',
-                        iconUrl : 'images/check.svg'
-                    }]
-                });
-            } else {
-                var m = this.at(0);
-                var type = 'basic';
-                var message = i18n('newMessage');
-                var imageUrl;
-                if (this.showMessage()) {
-                    message = m.get('message');
-                    if (m.get('imageUrl')) {
-                        type = 'image';
-                        imageUrl = m.get('imageUrl');
-                    }
-                }
-                if (this.showSender()) {
-                    title = m.get('title');
-                    iconUrl = m.get('iconUrl');
-                }
-                extension.notification.update({
-                    type     : type,
-                    title    : title,
-                    message  : message,
-                    iconUrl  : iconUrl,
-                    imageUrl : imageUrl
-                });
-            }
+            notification.onclick = this.onClick.bind(this, last.get('conversationId'));
+
+            // We don't want to notify the user about these same messages again
+            this.clear();
         },
         getSetting: function() {
-            return storage.get('notification-setting') || 'message';
-        },
-        showMessage: function() {
-            return this.getSetting() === SETTINGS.MESSAGE;
-        },
-        showSender: function() {
-            var setting = this.getSetting();
-            return (setting === SETTINGS.MESSAGE || setting === SETTINGS.NAME);
+            return storage.get('notification-setting') || SETTINGS.MESSAGE;
         },
         onRemove: function() {
             console.log('remove notification');
-            if (this.length === 0) {
-                extension.notification.clear();
-                return;
-            }
         },
         clear: function() {
+            console.log('remove all notifications');
             this.reset([]);
-        }
+        },
+        enable: function() {
+            var update = !enabled;
+            enabled = true;
+            if (update) {
+              this.update();
+            }
+        },
+        disable: function() {
+            enabled = false;
+        },
+
     }))();
 })();
